@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify, send_file
 from pydantic import BaseModel, Field, validator
-from typing import Literal
+from typing import Literal, Tuple
 import re
+import os
+import zipfile
 from io import BytesIO
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
@@ -36,7 +38,16 @@ class CompanyFormation(BaseModel):
             raise ValueError('Invalid US state or territory')
         return v.upper()
 
-def generate_delaware_articles(company_data: CompanyFormation) -> BytesIO:
+def generate_delaware_articles(company_data: CompanyFormation) -> Tuple[BytesIO, str]:
+    """Generate PDF and text versions of Delaware articles of incorporation
+    
+    Args:
+        company_data: Company formation data
+        
+    Returns:
+        Tuple containing PDF buffer and text content
+    """
+    # Generate PDF
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     
@@ -71,9 +82,41 @@ def generate_delaware_articles(company_data: CompanyFormation) -> BytesIO:
     
     c.save()
     buffer.seek(0)
-    return buffer
+    
+    # Generate text version
+    today = datetime.now().strftime("%d %B, %Y")
+    text_content = f"""CERTIFICATE OF INCORPORATION
 
-def generate_delaware_llc_certificate(company_data: CompanyFormation) -> BytesIO:
+FIRST: The name of this corporation is:
+{company_data.company_name}
+
+SECOND: Its registered office in the State of Delaware is located at:
+251 Little Falls Drive, Wilmington, New Castle County, Delaware 19808
+
+THIRD: The purpose of the corporation is to engage in any lawful act or activity for
+which corporations may be organized under the General Corporation Law of Delaware.
+
+FOURTH: The total number of shares of stock which this corporation is authorized
+to issue is 1,000 shares of Common Stock with $0.01 par value per share.
+
+IN WITNESS WHEREOF, the undersigned, being the incorporator hereinbefore named,
+has executed this Certificate of Incorporation this {today}.
+
+Incorporator:
+{company_data.incorporator_name}"""
+    
+    return buffer, text_content
+
+def generate_delaware_llc_certificate(company_data: CompanyFormation) -> Tuple[BytesIO, str]:
+    """Generate PDF and text versions of Delaware LLC certificate of formation
+    
+    Args:
+        company_data: Company formation data
+        
+    Returns:
+        Tuple containing PDF buffer and text content
+    """
+    # Generate PDF
     buffer = BytesIO()
     c = canvas.Canvas(buffer, pagesize=letter)
     
@@ -108,7 +151,30 @@ def generate_delaware_llc_certificate(company_data: CompanyFormation) -> BytesIO
     
     c.save()
     buffer.seek(0)
-    return buffer
+    
+    # Generate text version
+    today = datetime.now().strftime("%d %B, %Y")
+    text_content = f"""CERTIFICATE OF FORMATION
+
+FIRST: The name of the limited liability company is:
+{company_data.company_name}
+
+SECOND: The address of its registered office in the State of Delaware is:
+251 Little Falls Drive, Wilmington, New Castle County, Delaware 19808
+
+THIRD: The name and address of its registered agent in the State of Delaware is:
+Corporation Service Company
+251 Little Falls Drive
+Wilmington, DE 19808
+
+FOURTH: The limited liability company shall be managed by its members.
+
+IN WITNESS WHEREOF, the undersigned has executed this Certificate of Formation this {today}.
+
+Authorized Person:
+{company_data.incorporator_name}"""
+    
+    return buffer, text_content
 
 def generate_california_articles(company_data: CompanyFormation) -> BytesIO:
     buffer = BytesIO()
@@ -180,6 +246,11 @@ def generate_california_llc_certificate(company_data: CompanyFormation) -> Bytes
 
 @app.route('/form-company', methods=['POST'])
 def form_company():
+    """Process form data and generate company formation documents
+    
+    Returns:
+        A zip file containing both PDF and TXT versions of the formation documents
+    """
     try:
         # Handle both JSON and form data
         if request.is_json:
@@ -196,18 +267,28 @@ def form_company():
         
         if company_data.state_of_formation == 'DE':
             if company_data.company_type == 'corporation':
-                pdf_buffer = generate_delaware_articles(company_data)
+                pdf_buffer, text_content = generate_delaware_articles(company_data)
             elif company_data.company_type == 'LLC':
-                pdf_buffer = generate_delaware_llc_certificate(company_data)
+                pdf_buffer, text_content = generate_delaware_llc_certificate(company_data)
             else:
                 return jsonify({"error": "Unsupported company type"}), 400
-        elif company_data.state_of_formation == 'CA':
-            if company_data.company_type == 'corporation':
-                pdf_buffer = generate_california_articles(company_data)
-            elif company_data.company_type == 'LLC':
-                pdf_buffer = generate_california_llc_certificate(company_data)
-            else:
-                return jsonify({"error": "Unsupported company type"}), 400
+            
+            # Create a zip file containing both PDF and TXT files
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w') as zf:
+                # Add PDF file
+                zf.writestr(f"{company_data.company_name}_certificate.pdf", pdf_buffer.getvalue())
+                
+                # Add TXT file
+                zf.writestr(f"{company_data.company_name}_certificate.txt", text_content)
+            
+            zip_buffer.seek(0)
+            return send_file(
+                zip_buffer,
+                mimetype='application/zip',
+                as_attachment=True,
+                download_name=f"{company_data.company_name}_formation_documents.zip"
+            )
         else:
             return jsonify({
                 "error": "Only Delaware and California entities are supported at this time"
