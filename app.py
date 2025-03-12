@@ -205,7 +205,7 @@ def company_form():
             <label for="state_of_formation">State of Formation:</label>
             <select id="state_of_formation" name="state_of_formation" required>
                 <option value="">Select a state</option>
-                {state_options_html}
+                {"".join(f'<option value="{state}">{state}</option>' for state in states)}
             </select>
             
             <label for="company_type">Company Type:</label>
